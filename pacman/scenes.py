@@ -12,7 +12,7 @@ from .constants import (
 )
 from .maze import Maze
 from .entities import PacMan, create_ghosts, Fruit, FloatingScore
-from .agent import RandomForestAgent
+from .agent import HeuristicAgent, RandomForestAgent
 from .data_logger import CSVDataLogger
 from .features import extract_features
 from . import renderer
@@ -90,6 +90,7 @@ class MenuScene(Scene):
             "Arrow Keys / WASD to move",
             "Eat all dots to clear the level",
             "Avoid ghosts! Eat power pellets to fight back!",
+            "Press M for model AI and H for solver",
         ]):
             t = f["small"].render(line, True, WHITE)
             surface.blit(t, (SCREEN_WIDTH // 2 - t.get_width() // 2, 320 + i * 30))
@@ -113,7 +114,7 @@ class GameplayScene(Scene):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.log_path = os.path.join(project_root, "data", "training_data.csv")
         self.model_path = os.path.join(
-            project_root, "models", "pacman_random_forest.joblib"
+            project_root, "models", "pacman_random_forest_v2.joblib"
         )
 
         self.score = 0
@@ -132,10 +133,12 @@ class GameplayScene(Scene):
         self.fruit = Fruit()
         self.logger = CSVDataLogger(self.log_path)
         self.agent = RandomForestAgent(self.model_path)
+        self.solver = HeuristicAgent()
         self.ai_enabled = False
+        self.solver_enabled = False
         self.last_human_action: str | None = None
         self._logged_this_center = False
-        self._ai_decided_this_center = False
+        self._auto_decided_this_center = False
 
         self.phase = GamePhase.INTRO
         self.phase_start = pygame.time.get_ticks()
@@ -143,6 +146,15 @@ class GameplayScene(Scene):
 
     def _now(self):
         return pygame.time.get_ticks()
+
+    def _log_labeled_decision(self, label):
+        if self._logged_this_center:
+            return
+        if label not in (DIR_UP, DIR_LEFT, DIR_DOWN, DIR_RIGHT):
+            return
+        features = extract_features(self)
+        self.logger.log(features, label)
+        self._logged_this_center = True
 
     # ------------------------------------------------------------------
     # Level / life management
@@ -167,7 +179,7 @@ class GameplayScene(Scene):
         now = self._now()
         self.pacman.reset()
         self._logged_this_center = False
-        self._ai_decided_this_center = False
+        self._auto_decided_this_center = False
         if self.level >= 5:
             self.pacman.speed = 3
         for g in self.ghosts:
@@ -196,8 +208,15 @@ class GameplayScene(Scene):
             print(f"M pressed! Agent available: {self.agent.available}")
             if self.agent.available:
                 self.ai_enabled = not self.ai_enabled
+                if self.ai_enabled:
+                    self.solver_enabled = False
             return
-        if self.ai_enabled:
+        if event.key == pygame.K_h:
+            self.solver_enabled = not self.solver_enabled
+            if self.solver_enabled:
+                self.ai_enabled = False
+            return
+        if self.ai_enabled or self.solver_enabled:
             return
         if self.phase in (GamePhase.READY, GamePhase.PLAYING, GamePhase.INTRO):
             if event.key in (pygame.K_RIGHT, pygame.K_d):
@@ -255,20 +274,26 @@ class GameplayScene(Scene):
 
     def _update_playing(self, now):
         if self.pacman.at_center():
-            if self.ai_enabled:
-                if not self._ai_decided_this_center:
-                    action = self.agent.predict(self)
+            controller = None
+            if self.solver_enabled:
+                controller = self.solver
+            elif self.ai_enabled:
+                controller = self.agent
+
+            if controller is not None:
+                if not self._auto_decided_this_center:
+                    action = controller.predict(self)
                     if action in (DIR_UP, DIR_LEFT, DIR_DOWN, DIR_RIGHT):
                         self.pacman.queued_dir = action
-                    self._ai_decided_this_center = True
+                        if self.solver_enabled:
+                            self._log_labeled_decision(action)
+                    self._auto_decided_this_center = True
             else:
-                if not self._logged_this_center and self.last_human_action:
-                    features = extract_features(self)
-                    self.logger.log(features, self.last_human_action)
-                    self._logged_this_center = True
+                if self.last_human_action:
+                    self._log_labeled_decision(self.last_human_action)
         else:
             self._logged_this_center = False
-            self._ai_decided_this_center = False
+            self._auto_decided_this_center = False
 
         self.pacman.update(self.maze)
 
@@ -444,10 +469,19 @@ class GameplayScene(Scene):
 
         renderer.draw_footer(surface, a, self.lives, self.level)
 
-        mode = "AI" if self.ai_enabled else "HUMAN"
-        status_color = CYAN if self.ai_enabled else WHITE
+        if self.solver_enabled:
+            mode = "SOLVER"
+            status_color = YELLOW
+        elif self.ai_enabled:
+            mode = "MODEL"
+            status_color = CYAN
+        else:
+            mode = "HUMAN"
+            status_color = WHITE
         mode_text = f["small"].render(
-            f"MODE: {mode}  |  PRESS M TO TOGGLE AI", True, status_color
+            f"MODE: {mode} | M: MODEL | H: SOLVER",
+            True,
+            status_color,
         )
         surface.blit(
             mode_text,

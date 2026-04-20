@@ -1,10 +1,11 @@
-"""HUD drawing helpers — header, footer, text overlays."""
+"""HUD drawing helpers for status text."""
 
 import pygame
-from .constants import (
-    TILE_SIZE, HALF_TILE, ROWS, SCREEN_WIDTH, HEADER_HEIGHT,
-    WHITE, YELLOW, RED, CYAN,
-)
+
+from .constants import HEADER_HEIGHT, ROWS, SCREEN_WIDTH, TILE_SIZE, RED, WHITE, YELLOW
+
+
+_footer_cache: dict[str, pygame.Surface] = {}
 
 
 def draw_header(surface, fonts, score, high_score, level):
@@ -49,8 +50,10 @@ def draw_footer(surface, assets, lives, level):
 
 def draw_ready_text(surface, font):
     txt = font.render("READY!", True, YELLOW)
-    surface.blit(txt, (SCREEN_WIDTH // 2 - txt.get_width() // 2,
-                        15 * TILE_SIZE + HEADER_HEIGHT))
+    surface.blit(
+        txt,
+        (SCREEN_WIDTH // 2 - txt.get_width() // 2, 15 * TILE_SIZE + HEADER_HEIGHT),
+    )
 
 
 def draw_game_over_overlay(surface, fonts, frame_count):
@@ -58,5 +61,5 @@ def draw_game_over_overlay(surface, fonts, frame_count):
     y = 15 * TILE_SIZE + HEADER_HEIGHT
     surface.blit(txt, (SCREEN_WIDTH // 2 - txt.get_width() // 2, y))
     if (frame_count // 30) % 2 == 0:
-        p = fonts["medium"].render("Press ENTER to continue", True, WHITE)
-        surface.blit(p, (SCREEN_WIDTH // 2 - p.get_width() // 2, y + 40))
+        prompt = fonts["medium"].render("Press ENTER to continue", True, WHITE)
+        surface.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, y + 40))
